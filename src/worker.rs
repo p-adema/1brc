@@ -1,10 +1,17 @@
 use std::fmt::{Display, Formatter};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc, Mutex};
 use std::thread::JoinHandle;
+use std::fs::File;
+use std::io::Read;
 
-use crate::parse::*;
 use crate::ref_hashmap::RefHashMap;
 
+pub(crate) const BLOCK_SIZE: usize = 50_000;
+pub(crate) const N_BLOCKS: usize = 3;
+
+pub(crate) struct Buffers(Vec<ThreadBuffer>);
+
+pub(crate) type ThreadBuffer = Arc<[Mutex<[u8; BLOCK_SIZE]>; N_BLOCKS]>;
 pub(crate) type RefMap = RefHashMap<Vec<u8>, Station>;
 
 fn parse_worker(
@@ -172,5 +179,58 @@ impl<'a> Line<'a> {
             station: &s[..colon_pos],
             measurement: num,
         }
+    }
+}
+
+pub fn read_worker(thread_buffers: Buffers, mut file: File) {
+    let mut remainder = [0; 50];
+    let mut remainder_size = 0;
+    for thread_locks in thread_buffers.0.iter().cycle() {
+        for mut buf in thread_locks.iter().filter_map(|l| l.try_lock().ok()).filter(|b| b[0] == 0) {
+            let mut start = remainder_size;
+            buf[..start].copy_from_slice(&remainder[..remainder_size]);
+            loop {
+                let read = file.read(&mut buf[start..]).unwrap();
+                if read == 0 {
+                    break;
+                }
+                start += read;
+            }
+            if start < BLOCK_SIZE {
+                buf[start..].fill(0);
+                return;
+            }
+
+            let last_nl = (BLOCK_SIZE - 50)
+                + memchr::memrchr(b'\n', &buf[BLOCK_SIZE - 50..])
+                .expect("Missing newline in file");
+
+            let rem = &buf[last_nl + 1..];
+            remainder_size = rem.len();
+            remainder[..remainder_size].copy_from_slice(rem);
+        }
+    }
+}
+
+
+impl Buffers {
+    pub(crate) fn new(parse_threads: usize) -> Self {
+        Self(
+            (0..parse_threads)
+                .map(|_| {
+                    Arc::new(
+                        (0..N_BLOCKS)
+                            .map(|_| Mutex::new([0; BLOCK_SIZE]))
+                            .collect::<Vec<_>>()
+                            .try_into()
+                            .unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+
+    pub(crate) fn get(&self, nth: usize) -> ThreadBuffer {
+        self.0[nth].clone()
     }
 }
