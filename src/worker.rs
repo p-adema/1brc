@@ -4,7 +4,7 @@ use std::thread::JoinHandle;
 use std::fs::File;
 use std::io::Read;
 
-use crate::ref_hashmap::RefHashMap;
+use crate::ref_hash_map::RefHashMap;
 
 pub(crate) const BLOCK_SIZE: usize = 50_000;
 pub(crate) const N_BLOCKS: usize = 3;

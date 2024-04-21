@@ -1,7 +1,7 @@
 use std::fs::File;
 use crate::worker::{Buffers, Parsers, read_worker, Station};
 
-mod ref_hashmap;
+mod ref_hash_map;
 mod worker;
 
 
