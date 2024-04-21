@@ -23,8 +23,8 @@ pub(crate) unsafe fn init_buffers(parse_threads: usize) -> (BufferOwner, FillHan
             UnsafeCell::new([0; N_BLOCKS].map(|_| BufferBlock::new()))
         })
         .collect::<Box<_>>();
-    let fill = owner.iter().map(|b| ThreadBufferHandle(UnsafeCell::get(b), PhantomData)).collect();
-    let parse = owner.iter().map(|b| ThreadBufferHandle(UnsafeCell::get(b), PhantomData)).collect();
+    let fill = owner.iter().map(|b| ThreadBufferHandle(b.get(), PhantomData)).collect();
+    let parse = owner.iter().map(|b| ThreadBufferHandle(b.get(), PhantomData)).collect();
     (BufferOwner(owner), fill, parse)
 }
 
@@ -51,19 +51,21 @@ impl<S: BufferSide> Drop for ThreadBufferHandle<S> {
                 // one of the Dropped markers, one of the other ones will be detected
                 // and the other side will panic.
                 // Unless, of course, the owning buffer is dropped. Then we segfault
-                *block.1.get() = BlockState::Dropped
+                *block.state.get() = BlockState::Dropped
             }
         }
     }
 }
 
 impl ThreadBufferHandle<FillSide> {
+    #[inline]
     pub(crate) fn available(&self) -> impl Iterator<Item=BlockRef<FillCleanup>> {
         unsafe { (*self.0).iter().filter_map(|b| b.try_fill()) }
     }
 }
 
 impl ThreadBufferHandle<ParseSide> {
+    #[inline]
     pub(crate) fn available(&self) -> impl Iterator<Item=BlockRef<ParseCleanup>> {
         unsafe {
             (*self.0).iter().filter_map(|b| b.try_parse())
@@ -101,12 +103,15 @@ enum BlockState {
     Dropped,
 }
 
-pub(crate) struct BufferBlock(UnsafeCell<[u8; BLOCK_SIZE]>, UnsafeCell<BlockState>);
+pub(crate) struct BufferBlock {
+    state: UnsafeCell<BlockState>,
+    buf: UnsafeCell<[u8; BLOCK_SIZE]>,
+}
 
 impl Debug for BufferBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         unsafe {
-            match *self.1.get() {
+            match *self.state.get() {
                 BlockState::Empty => { write!(f, "BufferBlock(Empty)") }
                 BlockState::Filled => { write!(f, "BufferBlock(Filled)") }
                 BlockState::Dropped => { write!(f, "BufferBlock(Dropped!)") }
@@ -121,26 +126,32 @@ unsafe impl Sync for ThreadBufferHandle<ParseSide> {}
 
 impl BufferBlock {
     fn new() -> Self {
-        Self(UnsafeCell::new([0; BLOCK_SIZE]), UnsafeCell::new(BlockState::Empty))
+        Self {
+            buf: UnsafeCell::new([0; BLOCK_SIZE]),
+            state: UnsafeCell::new(BlockState::Empty)
+        }
     }
 
+    #[inline]
     pub(crate) unsafe fn try_fill(&self) -> Option<BlockRef<FillCleanup>> {
-        match *self.1.get() {
+        match *self.state.get() {
             BlockState::Empty => Some(self.get_ref()),
             BlockState::Filled => None,
             BlockState::Dropped => panic!("Parser was dropped too soon!")
         }
     }
+    #[inline]
     pub(crate) unsafe fn try_parse(&self) -> Option<BlockRef<ParseCleanup>> {
-        match *self.1.get() {
+        match *self.state.get() {
             BlockState::Filled => Some(self.get_ref()),
             BlockState::Empty => None,
             BlockState::Dropped => panic!("Filler was dropped too soon!")
         }
     }
 
+    #[inline]
     unsafe fn get_ref<C: BlockCleanup>(&self) -> BlockRef<C> {
-        BlockRef(&mut *self.0.get(), self.1.get(), PhantomData)
+        BlockRef(&mut *self.buf.get(), self.state.get(), PhantomData)
     }
 }
 
@@ -162,6 +173,7 @@ impl<'a, C: BlockCleanup> DerefMut for BlockRef<'a, C> {
 }
 
 impl<'a, C: BlockCleanup> Drop for BlockRef<'a, C> {
+    #[inline]
     fn drop(&mut self) {
         C::clean(self)
     }

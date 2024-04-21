@@ -17,6 +17,7 @@ impl<K> PartialEq for RefKey<K>
     where
         K: Clone + Hash + Eq,
 {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         unsafe { (*self.0.get()).eq(&*other.0.get()) }
     }
@@ -26,6 +27,7 @@ impl<K> Hash for RefKey<K>
     where
         K: Clone + Hash + Eq,
 {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe { (*self.0.get()).hash(state) }
     }
@@ -65,6 +67,7 @@ impl<K, V> RefHashMap<K, V>
         Self(HashMap::with_capacity(capacity))
     }
 
+    #[inline]
     pub(crate) fn entry_ref<'rf, 'map, R: 'rf, T>(
         &'map mut self,
         reference: R,
@@ -99,6 +102,7 @@ impl<K, V> Iterator for IntoIter<K, V>
 {
     type Item = (K, V);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|(k, v)| (k.inner(), v))
     }
@@ -111,6 +115,7 @@ impl<K, V> IntoIterator for RefHashMap<K, V>
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         IntoIter(self.0.into_iter())
     }
@@ -124,6 +129,7 @@ impl<'a, K, V> Entry<'a, K, V>
     where
         K: Clone + Hash + Eq,
 {
+    #[inline]
     pub(crate) fn and_modify<F>(self, f: F) -> Self
         where
             F: FnOnce(&mut V),
@@ -132,6 +138,7 @@ impl<'a, K, V> Entry<'a, K, V>
         Self(entry)
     }
 
+    #[inline]
     pub(crate) fn or_insert_with<F>(self, default: F) -> &'a mut V
         where
             F: FnOnce() -> V,
