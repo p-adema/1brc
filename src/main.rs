@@ -1,8 +1,10 @@
 use std::fs::File;
-use crate::worker::{Buffers, Parsers, read_worker, Station};
+use crate::buffers::init_buffers;
+use crate::worker::{Parsers, read_worker, Station};
 
 mod ref_hash_map;
 mod worker;
+mod buffers;
 
 
 fn main() {
@@ -12,10 +14,10 @@ fn main() {
     assert!(threads > 1, "This program expects to have at least two cores, and doesn't work single-threaded");
     let parse_threads = threads - 1;
 
-    let buffers: Buffers = Buffers::new(parse_threads);
-    let parsers = Parsers::start(parse_threads, &buffers);
+    let (_owner, fill_handles, parse_handles) = unsafe { init_buffers(parse_threads) };
+    let parsers = Parsers::start(parse_handles);
 
-    read_worker(buffers, file);
+    read_worker(&fill_handles, file);
 
     show_results(parsers.join());
 }

@@ -1,48 +1,58 @@
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, mpsc, Mutex};
-use std::thread::JoinHandle;
 use std::fs::File;
 use std::io::Read;
+use std::sync::mpsc;
+use std::thread::JoinHandle;
 
+use crate::buffers::{BLOCK_SIZE, FillSide, ParseHandles, ParseSide, ThreadBufferHandle};
 use crate::ref_hash_map::RefHashMap;
 
-pub(crate) const BLOCK_SIZE: usize = 50_000;
-pub(crate) const N_BLOCKS: usize = 3;
-
-pub(crate) struct Buffers(Vec<ThreadBuffer>);
-
-pub(crate) type ThreadBuffer = Arc<[Mutex<[u8; BLOCK_SIZE]>; N_BLOCKS]>;
 pub(crate) type RefMap = RefHashMap<Vec<u8>, Station>;
+
+pub fn read_worker(fill_handles: &[ThreadBufferHandle<FillSide>], mut file: File) {
+    let mut remainder = [0; 50];
+    let mut remainder_size = 0;
+    for tb_handle in fill_handles.iter().cycle() {
+        for mut buf in tb_handle.available() {
+            let mut start = remainder_size;
+            buf[..start].copy_from_slice(&remainder[..remainder_size]);
+            loop {
+                let read = file.read(&mut buf[start..]).unwrap();
+                if read == 0 {
+                    break;
+                }
+                start += read;
+            }
+            if start < BLOCK_SIZE {
+                buf[start..].fill(0);
+                return;
+            }
+
+            let last_nl = (BLOCK_SIZE - 50)
+                + memchr::memrchr(b'\n', &buf[BLOCK_SIZE - 50..])
+                .expect("Missing newline in file");
+
+            let rem = &buf[last_nl + 1..];
+            remainder_size = rem.len();
+            remainder[..remainder_size].copy_from_slice(rem);
+        }
+    }
+}
 
 fn parse_worker(
     stop_rx: mpsc::Receiver<()>,
-    thread_buffer: ThreadBuffer,
+    tb_handle: ThreadBufferHandle<ParseSide>,
 ) -> RefMap {
     let mut map: RefMap = RefHashMap::with_capacity(512);
-    for i in (0..N_BLOCKS).cycle() {
-        if i == 0 && stop_rx.try_recv().is_ok() {
-            break;
+    let mut break_next = false;
+    while !break_next {
+        if stop_rx.try_recv().is_ok() {
+            // One more run
+            break_next = true;
         }
-
-        let buf = thread_buffer[i].try_lock().ok();
-        if buf.is_none() {
-            continue;
+        for buf in tb_handle.available() {
+            buf_parse(&mut map, buf.as_slice())
         }
-        let mut buf = buf.unwrap();
-        if buf[0] == 0 {
-            drop(buf);
-            std::thread::sleep(std::time::Duration::new(0, 50));
-            continue;
-        }
-        buf_parse(&mut map, buf.as_slice());
-        buf[0] = 0;
-    }
-    // last pass
-    for buf in (0..N_BLOCKS)
-        .map(|i| thread_buffer[i].lock().unwrap())
-        .filter(|buf| buf[0] != 0)
-    {
-        buf_parse(&mut map, buf.as_slice())
     }
     map
 }
@@ -64,13 +74,13 @@ pub struct Parsers {
     stop_handles: Vec<mpsc::SyncSender<()>>,
 }
 
+
 impl Parsers {
-    pub(crate) fn start(parse_threads: usize, buffers: &Buffers) -> Self {
-        let (thread_handles, stop_handles): (Vec<_>, Vec<_>) = (0..parse_threads)
-            .map(|n| {
+    pub(crate) fn start(parse_handles: ParseHandles) -> Self {
+        let (thread_handles, stop_handles): (Vec<_>, Vec<_>) = parse_handles.into_iter()
+            .map(|tb_handle| {
                 let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
-                let thread_buffer = buffers.get(n);
-                let map_handle = std::thread::spawn(move || parse_worker(stop_rx, thread_buffer));
+                let map_handle = std::thread::spawn(move || parse_worker(stop_rx, tb_handle));
 
                 (map_handle, stop_tx)
             })
@@ -100,7 +110,6 @@ impl Parsers {
         res
     }
 }
-
 
 fn update(map: &mut RefMap, line: Line) {
     map.entry_ref(line.station)
@@ -179,58 +188,5 @@ impl<'a> Line<'a> {
             station: &s[..colon_pos],
             measurement: num,
         }
-    }
-}
-
-pub fn read_worker(thread_buffers: Buffers, mut file: File) {
-    let mut remainder = [0; 50];
-    let mut remainder_size = 0;
-    for thread_locks in thread_buffers.0.iter().cycle() {
-        for mut buf in thread_locks.iter().filter_map(|l| l.try_lock().ok()).filter(|b| b[0] == 0) {
-            let mut start = remainder_size;
-            buf[..start].copy_from_slice(&remainder[..remainder_size]);
-            loop {
-                let read = file.read(&mut buf[start..]).unwrap();
-                if read == 0 {
-                    break;
-                }
-                start += read;
-            }
-            if start < BLOCK_SIZE {
-                buf[start..].fill(0);
-                return;
-            }
-
-            let last_nl = (BLOCK_SIZE - 50)
-                + memchr::memrchr(b'\n', &buf[BLOCK_SIZE - 50..])
-                .expect("Missing newline in file");
-
-            let rem = &buf[last_nl + 1..];
-            remainder_size = rem.len();
-            remainder[..remainder_size].copy_from_slice(rem);
-        }
-    }
-}
-
-
-impl Buffers {
-    pub(crate) fn new(parse_threads: usize) -> Self {
-        Self(
-            (0..parse_threads)
-                .map(|_| {
-                    Arc::new(
-                        (0..N_BLOCKS)
-                            .map(|_| Mutex::new([0; BLOCK_SIZE]))
-                            .collect::<Vec<_>>()
-                            .try_into()
-                            .unwrap(),
-                    )
-                })
-                .collect::<Vec<_>>()
-        )
-    }
-
-    pub(crate) fn get(&self, nth: usize) -> ThreadBuffer {
-        self.0[nth].clone()
     }
 }
