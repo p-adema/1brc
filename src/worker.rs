@@ -12,10 +12,16 @@ pub(crate) const N_BLOCKS: usize = 3;
 pub(crate) struct Buffers(Vec<ThreadBuffer>);
 
 pub(crate) type ThreadBuffer = Arc<[Mutex<[u8; BLOCK_SIZE]>; N_BLOCKS]>;
+
+// HashBrown would work too, but it's slightly less reliable on my machine
+// than the modified version of std's Hashmap.
+
+// use hashbrown::HashMap;
+// pub(crate) type RefMap = HashMap<Vec<u8>, Station>;
 pub(crate) type RefMap = RefHashMap<Vec<u8>, Station>;
 
 fn parse_worker(stop_rx: mpsc::Receiver<()>, thread_buffer: ThreadBuffer) -> RefMap {
-    let mut map: RefMap = RefHashMap::with_capacity(512);
+    let mut map = RefMap::with_capacity(512);
     (0..N_BLOCKS)
         .cycle()
         .map_while(|i| {

@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 memchr = "2.7.2"
+#hashbrown = "0.14.5"
 
 [profile.release]
 lto = "fat"
