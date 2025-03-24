@@ -20,7 +20,7 @@ fn main() {
     show_results(parsers.join());
 }
 
-fn show_results(res: Vec<(String, Station)>) {
+fn show_results(res: Vec<(Box<str>, Station)>) {
     print!("{{");
     for (i, (name, station)) in res.into_iter().enumerate() {
         if i != 0 {

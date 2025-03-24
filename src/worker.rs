@@ -17,8 +17,8 @@ pub(crate) type ThreadBuffer = Arc<[Mutex<[u8; BLOCK_SIZE]>; N_BLOCKS]>;
 // than the modified version of std's Hashmap.
 
 // use hashbrown::HashMap;
-// pub(crate) type RefMap = HashMap<Vec<u8>, Station>;
-pub(crate) type RefMap = RefHashMap<Vec<u8>, Station>;
+// pub(crate) type RefMap = HashMap<Box<u8>, Station>;
+pub(crate) type RefMap = RefHashMap<Box<[u8]>, Station>;
 
 fn parse_worker(stop_rx: mpsc::Receiver<()>, thread_buffer: ThreadBuffer) -> RefMap {
     let mut map = RefMap::with_capacity(512);
@@ -85,7 +85,7 @@ impl Parsers {
         }
     }
 
-    pub(crate) fn join(self) -> Vec<(String, Station)> {
+    pub(crate) fn join(self) -> Vec<(Box<str>, Station)> {
         self.stop_handles
             .into_iter()
             .for_each(|s| s.send(()).unwrap());
@@ -94,10 +94,10 @@ impl Parsers {
             .into_iter()
             .map(|h| h.join().unwrap())
             .fold(
-                std::collections::HashMap::<String, Station>::with_capacity(512),
+                std::collections::HashMap::<Box<str>, Station>::with_capacity(512),
                 |mut map, like| {
                     for (name, station2) in like.into_iter() {
-                        let name = String::from_utf8(name).expect("Should be valid UTF-8");
+                        let name: Box<str> = unsafe { std::str::from_boxed_utf8_unchecked(name) };
                         map.entry(name)
                             .and_modify(|station1| station1.update(&station2))
                             .or_insert(station2);
@@ -106,7 +106,7 @@ impl Parsers {
                 },
             )
             .into_iter()
-            .collect::<Vec<(String, Station)>>();
+            .collect::<Vec<(Box<str>, Station)>>();
         res.sort_unstable_by(|(n1, _), (n2, _)| n1.cmp(n2));
         res
     }

@@ -82,7 +82,7 @@ impl<K, V> RefHashMap<K, V>
     {
         let slice = reference.as_ref();
         let vec: Vec<T> = unsafe {
-            Vec::from_raw_parts(mem::transmute(slice.as_ptr()), slice.len(), slice.len())
+            Vec::from_raw_parts(mem::transmute::<*const T, *mut T>(slice.as_ptr()), slice.len(), slice.len())
         };
         let key: K = vec.into();
         Entry(self.0.entry(RefKey::new(key)))

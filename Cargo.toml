@@ -1,13 +1,11 @@
 [package]
 name = "brc"
 version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2024"
 
 [dependencies]
-memchr = "2.7.2"
-#hashbrown = "0.14.5"
+memchr = "2.7.4"
+#hashbrown = "0.15.2"
 
 [profile.release]
 lto = "fat"
